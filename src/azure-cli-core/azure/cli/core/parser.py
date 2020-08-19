@@ -225,6 +225,11 @@ class AzCliCommandParser(CLICommandParser):
         for parameter in parameters:
             parameter_set.add(parameter)
 
+        # Extend the command if the first raw argument is not a parameter.
+        if raw_arguments and raw_arguments[0] not in parameter_set:
+            sep = ' ' if command else ''
+            command = '{cmd}{sep}{arg}'.format(cmd=command, sep=sep, arg=raw_arguments[0])
+
         # If we can retrieve the extension from the current parser's command source...
         if has_extension_name(self.command_source):
             extension = self.command_source.extension_name
@@ -239,9 +244,6 @@ class AzCliCommandParser(CLICommandParser):
                 # We're looking for a subcommand under an extension command group. Set the
                 # extension to reflect this.
                 extension = parser.command_source.extension_name
-            # Extend the command if the first raw argument is not a parameter.
-            if raw_arguments and raw_arguments[0] not in parameter_set:
-                command = '{cmd} {arg}'.format(cmd=command, arg=raw_arguments[0])
         # Otherwise, only set the extension if every subparser comes from an extension. This occurs
         # when an unrecognized argument is passed to a command from an extension.
         elif isinstance(self.subparser_map, dict):
