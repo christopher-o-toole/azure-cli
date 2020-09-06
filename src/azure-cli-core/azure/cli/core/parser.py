@@ -5,6 +5,7 @@
 
 from __future__ import print_function
 
+import re
 import sys
 import difflib
 
@@ -22,8 +23,11 @@ from knack.log import get_logger
 from knack.parser import CLICommandParser
 from knack.util import CLIError
 
+from colorama import Fore, Style
+
 logger = get_logger(__name__)
 
+ARGUMENT_PATTERN = re.compile(r'(?<!/)--(?P<argument>[a-z][A-Za-z-]*)')
 
 class IncorrectUsageError(CLIError):
     '''Raised when a command is incorrectly used and the usage should be
@@ -146,12 +150,54 @@ class AzCliCommandParser(CLICommandParser):
         telemetry.set_user_fault('validation error: {}'.format(message))
         return super(AzCliCommandParser, self).error(message)
 
+    def _override_error_message(self, message, **kwargs):
+        debug = kwargs.pop('debug', False)
+        prog = kwargs.pop('prog', None)
+        value = kwargs.pop('value', None)
+
+        header_fmt_str = Style.BRIGHT + Fore.RED + '{error_type}' + Style.NORMAL + ': {msg}'
+        error_type = None
+        buffer = []
+        msg_buffer = []
+
+        if debug:
+            buffer.append(message + '\n')
+
+        if 'the following arguments are required' in message:
+            error_type = 'Argument required'
+            if (arguments := re.findall(ARGUMENT_PATTERN, message)):
+                for i, arg in enumerate(arguments):
+                    if i == 0:
+                        msg_buffer.append(arg)
+                    else:
+                        msg_buffer.extend(f' and {arg}')
+        elif 'command group' in message:
+            error_type = 'Command not found'
+            command = prog
+            subcommand = value
+            if command and subcommand:
+                msg_buffer.append(f'{command} {subcommand}')
+        elif 'expected one argument' in message or 'expected at least one argument' in message:
+            error_type = 'Value Required'
+            if (argument := ARGUMENT_PATTERN.search(message)):
+                msg_buffer.append(f'{argument.group()}')
+
+        if msg_buffer:
+            msg_buffer.append(Style.RESET_ALL)
+            buffer.append(header_fmt_str.format(error_type=error_type, msg=''.join(msg_buffer)))
+
+        return ''.join(buffer) if buffer else None
+
     def error(self, message):
         telemetry.set_user_fault('parse error: {}'.format(message))
+        # Argument required: name and resource group
         args = {'prog': self.prog, 'message': message}
         with CommandLoggerContext(logger):
-            logger.error('%(prog)s: error: %(message)s', args)
-        self.print_usage(sys.stderr)
+            if (error_msg := self._override_error_message(message)):
+                logger.error(error_msg)
+            else:
+                logger.error('%(prog)s: error: %(message)s', args)
+        #self.print_usage(sys.stderr)
         # Manual recommendations
         self._set_manual_recommendations(args['message'])
         # AI recommendations
@@ -230,7 +276,7 @@ class AzCliCommandParser(CLICommandParser):
             extension = self.command_source.extension_name
         # Otherwise, the command may have not been in a command group. The command source will not be
         # set in this case.
-        elif action and action.dest == '_subcommand':
+        elif action and (action.dest in ['_subcommand', '_command_package']):
             # Get all parsers in the set of possible actions.
             parsers = list(action.choices.values())
             parser = parsers[0] if parsers else None
@@ -425,6 +471,9 @@ class AzCliCommandParser(CLICommandParser):
                 error_msg = "{prog}: '{value}' is not a valid value for '{param}'. See '{prog} --help'.".format(
                     prog=self.prog, value=value, param=parameter)
                 candidates = difflib.get_close_matches(value, action.choices, cutoff=0.7)
+
+            if ((overridden_error_msg := self._override_error_message(error_msg, prog=self.prog, value=value))):
+                error_msg = overridden_error_msg
 
             telemetry.set_user_fault(error_msg)
             with CommandLoggerContext(logger):

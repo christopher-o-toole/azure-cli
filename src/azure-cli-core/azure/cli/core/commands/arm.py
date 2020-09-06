@@ -758,12 +758,42 @@ def _cli_show_command(context, name, getter_op, custom_command=False, **kwargs):
                          description_loader=description_loader, **kwargs)
 
 
+import re
+
+from colorama import Style, Fore
+
+RESOURCE_NOT_FOUND_PATTERN = re.compile(r'(?P<azure_resource>[A-Za-z\s]+)\s+\'(?P<invalid_resource_name>.*)\'\s+(?:not found|could not be found)')
+
+def _override_arm_exception_message(message, **kwargs):
+    header_fmt_str = Style.BRIGHT + Fore.RED + '{error_type}' + Style.NORMAL + ': {msg}'
+    error_type = None
+    buffer = []
+    msg_buffer = []
+
+    if 'could not be found' in message or 'not found' in message:
+        if (match := RESOURCE_NOT_FOUND_PATTERN.search(message)):
+            error_type = 'Resource not found'
+            invalid_resource_name = match.group('invalid_resource_name')
+            msg_buffer.append(f'{invalid_resource_name} does not exist')
+
+    if msg_buffer:
+        msg_buffer.append(Style.RESET_ALL)
+        buffer.append(header_fmt_str.format(error_type=error_type, msg=''.join(msg_buffer)))
+ 
+    return ''.join(buffer) if buffer else None
+
 def show_exception_handler(ex):
     if getattr(getattr(ex, 'response', ex), 'status_code', None) == 404:
         import sys
         from azure.cli.core.azlogging import CommandLoggerContext
+
         with CommandLoggerContext(logger):
-            logger.error(getattr(ex, 'message', ex))
+            msg = getattr(ex, 'message', ex)
+
+            if ((error_msg := _override_arm_exception_message(msg))):
+                logger.error(error_msg)
+            else:
+                logger.error(msg)
             sys.exit(3)
     raise ex
 

@@ -49,6 +49,56 @@ DISALLOWED_USER_NAMES = [
     "sys", "test2", "test3", "user4", "user5"
 ]
 
+import re
+
+from colorama import Style, Fore
+
+RESOURCE_NOT_FOUND_PATTERN = re.compile(r'(?P<azure_resource>[A-Za-z\s]+)\s+\'(?P<invalid_resource_name>.*)\'\s+(?:not found|could not be found)')
+
+def _override_arm_exception_message(message, **kwargs):
+    header_fmt_str = Style.BRIGHT + Fore.RED + '{error_type}' + Style.NORMAL + ': {msg}'
+    error_type = None
+    buffer = []
+    msg_buffer = []
+
+    if 'could not be found' in message or 'not found' in message:
+        if (match := RESOURCE_NOT_FOUND_PATTERN.search(message)):
+            error_type = 'Resource not found'
+            invalid_resource_name = match.group('invalid_resource_name')
+            msg_buffer.append(f'{invalid_resource_name} does not exist')
+
+    if msg_buffer:
+        msg_buffer.append(Style.RESET_ALL)
+        buffer.append(header_fmt_str.format(error_type=error_type, msg=''.join(msg_buffer)))
+ 
+    return ''.join(buffer) if buffer else None
+
+import re
+
+CHARACTER_NOT_ALLOWED_PATTERN = re.compile(r'[Pp]arameter\s+\'(?P<parameter>.*)\'\s+.*pattern[:\s]+\'(?P<regex>.*)\'')
+
+def _override_exception_message(ex: Exception):
+    header_fmt_str = Style.BRIGHT + Fore.RED + '{error_type}' + Style.NORMAL + ': {msg}'
+    error_type = None
+    buffer = []
+    msg_buffer = []
+    message = next(iter(ex.args), '')
+
+    if 'pattern' in message:
+        if ((match := CHARACTER_NOT_ALLOWED_PATTERN.search(message))):
+            error_type = 'Character not allowed'
+            invalid_value = getattr(ex, '_invalid_value', '')
+            pattern = re.compile(match.group('regex')[1:-1].replace(r'\\w', r'\\\w').replace('[', '[^', 1))
+            if (disallowed_characters := re.search(pattern, invalid_value)):
+                msg_buffer.append(''.join(set(c for c in disallowed_characters.group())))
+
+    if msg_buffer:
+        msg_buffer.append(Style.RESET_ALL)
+        buffer.append(header_fmt_str.format(error_type=error_type, msg=''.join(msg_buffer)))
+        if buffer:
+            msg = ''.join(buffer)
+            setattr(ex, 'message', msg)
+            setattr(ex, 'args', [msg])
 
 def handle_exception(ex):  # pylint: disable=too-many-return-statements
     # For error code, follow guidelines at https://docs.python.org/2/library/sys.html#sys.exit,
@@ -58,6 +108,8 @@ def handle_exception(ex):  # pylint: disable=too-many-return-statements
     from azure.cli.core.azlogging import CommandLoggerContext
     from azure.common import AzureException
     from azure.core.exceptions import AzureError
+
+    _override_exception_message(ex)
 
     with CommandLoggerContext(logger):
         if isinstance(ex, JMESPathTypeError):
@@ -76,7 +128,7 @@ def handle_exception(ex):  # pylint: disable=too-many-return-statements
                 pass
             return ex.args[1] if len(ex.args) >= 2 else 1
         if isinstance(ex, ValidationError):
-            logger.error('validation error: %s', ex)
+            logger.error('%s', ex)
             return 1
         if isinstance(ex, ClientRequestError):
             msg = str(ex)
