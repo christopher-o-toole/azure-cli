@@ -17,6 +17,7 @@ from azure.cli.core.commands import LongRunningOperation, _is_poller, cached_get
 from azure.cli.core.commands.client_factory import get_mgmt_service_client
 from azure.cli.core.commands.events import EVENT_INVOKER_PRE_LOAD_ARGUMENTS
 from azure.cli.core.commands.validators import IterateValue
+from azure.cli.core.error import AzCliErrorHandler
 from azure.cli.core.util import (
     shell_safe_json_parse, augment_no_wait_handler_args, get_command_type_kwarg, find_child_item)
 from azure.cli.core.profiles import ResourceType, get_sdk
@@ -758,43 +759,16 @@ def _cli_show_command(context, name, getter_op, custom_command=False, **kwargs):
                          description_loader=description_loader, **kwargs)
 
 
-import re
-
-from colorama import Style, Fore
-
-RESOURCE_NOT_FOUND_PATTERN = re.compile(r'(?P<azure_resource>[A-Za-z\s]+)\s+\'(?P<invalid_resource_name>.*)\'\s+(?:not found|could not be found)')
-
-def _override_arm_exception_message(message, **kwargs):
-    header_fmt_str = Style.BRIGHT + Fore.RED + '{error_type}' + Style.NORMAL + ': {msg}'
-    error_type = None
-    buffer = []
-    msg_buffer = []
-
-    if 'could not be found' in message or 'not found' in message:
-        if (match := RESOURCE_NOT_FOUND_PATTERN.search(message)):
-            error_type = 'Resource not found'
-            invalid_resource_name = match.group('invalid_resource_name')
-            msg_buffer.append(f'{invalid_resource_name} does not exist')
-
-    if msg_buffer:
-        msg_buffer.append(Style.RESET_ALL)
-        buffer.append(header_fmt_str.format(error_type=error_type, msg=''.join(msg_buffer)))
- 
-    return ''.join(buffer) if buffer else None
-
 def show_exception_handler(ex):
     if getattr(getattr(ex, 'response', ex), 'status_code', None) == 404:
         import sys
         from azure.cli.core.azlogging import CommandLoggerContext
 
         with CommandLoggerContext(logger):
-            msg = getattr(ex, 'message', ex)
-
-            if ((error_msg := _override_arm_exception_message(msg))):
-                logger.error(error_msg)
-            else:
-                logger.error(msg)
+            msg = AzCliErrorHandler()(getattr(ex, 'message', ex))
+            logger.error(msg)
             sys.exit(3)
+
     raise ex
 
 
