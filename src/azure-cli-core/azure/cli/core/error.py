@@ -50,7 +50,7 @@ class AzCliErrorType(Enum):
     CommandNotFound = ErrorType(
         error_type='Command not found',
         pattern=(
-            r'([\'\"])(?P<subcommand>.*)\1 is not in the \1(?P<command_group>az\s.*)\1 command group'
+            r'([\'\"])(?P<subcommand>.*)\1 is not in the \1(?P<command_group>.*)\1 command group'
         )
     )
     ResourceNotFound = ErrorType(
@@ -114,8 +114,9 @@ class AzCliError():
                 f', cli_error_type={repr(self.cli_error_type)}'
                 f', metadata={repr(self.metadata)})')
 
+
 class AzCliErrorHandler(metaclass=Singleton):
-    ERROR_MSG_FMT_STR = f'{Style.BRIGHT}{Fore.RED}{{error_type}}{Style.NORMAL}: {{msg}}{Style.RESET_ALL}'
+    ERROR_MSG_FMT_STR = f'{Style.BRIGHT}{Fore.RED}{{error_type}}:{Style.NORMAL} {{msg}}{Style.RESET_ALL}'
 
     def __init__(self):
         super().__init__()
