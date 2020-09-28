@@ -35,6 +35,14 @@ class AladdinUserFaultType(Enum):
     AzureResourceNotFound = 'AzureResourceNotFound'
     InvalidAccountName = 'InvalidAccountName'
 
+    def __eq__(self, value):
+        if hasattr(value, 'value'):
+            value = value.value
+        # pylint: disable=comparison-with-callable
+        return self.value == value
+    
+    def __hash__(self):
+        return hash(self.value)
 
 class CommandRecommender():
     """Recommend a command for user when user's command fails.
